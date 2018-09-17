@@ -551,41 +551,84 @@ impl<'a, A: ActionContext + 'a> Processor<'a, A> {
         key: Option<VirtualKeyCode>,
         mods: ModifiersState,
     ) {
-        match (key, state) {
-            (Some(key), ElementState::Pressed) => {
-                *self.ctx.last_modifiers() = mods;
-                *self.ctx.received_count() = 0;
-                *self.ctx.suppress_chars() = false;
+        *self.ctx.last_modifiers() = mods;
+        *self.ctx.suppress_chars() = false;
+        if state != ElementState::Pressed {
+            return
+        }
+        *self.ctx.received_count() = 0;
 
-                if self.process_key_bindings(mods, key) {
-                    *self.ctx.suppress_chars() = true;
-                }
-            },
-            (_, ElementState::Released) => *self.ctx.suppress_chars() = false,
-            _ => ()
+        if let Some(k) = key {
+            if self.process_key_bindings(mods, k) {
+                *self.ctx.suppress_chars() = true
+            }
+        }
+    }
+    /// https://github.com/jwilm/alacritty/issues/1054#issuecomment-368720359
+    fn char_to_unshifted_element(&self, c: char) -> Option<VirtualKeyCode> {
+        match c {
+            '~' => Some(VirtualKeyCode::Grave),
+            '!' => Some(VirtualKeyCode::Key1),
+            '@' => Some(VirtualKeyCode::Key2),
+            '\0' => Some(VirtualKeyCode::Key2),
+            '#' => Some(VirtualKeyCode::Key3),
+            '$' => Some(VirtualKeyCode::Key4),
+            '%' => Some(VirtualKeyCode::Key5),
+            '^' => Some(VirtualKeyCode::Key6),
+            '\x1e' => Some(VirtualKeyCode::Key6),
+            '&' => Some(VirtualKeyCode::Key7),
+            '*' => Some(VirtualKeyCode::Key8),
+            '(' => Some(VirtualKeyCode::Key9),
+            ')' => Some(VirtualKeyCode::Key0),
+            '_' => Some(VirtualKeyCode::Subtract),
+            '\x1f' => Some(VirtualKeyCode::Subtract),
+            '+' => Some(VirtualKeyCode::Equals),
+            '{' => Some(VirtualKeyCode::LBracket),
+            '\x1b' => Some(VirtualKeyCode::LBracket),
+            '}' => Some(VirtualKeyCode::RBracket),
+            '\x1d' => Some(VirtualKeyCode::RBracket),
+            '|' => Some(VirtualKeyCode::Backslash),
+            '\x1c' => Some(VirtualKeyCode::Backslash),
+            ':' => Some(VirtualKeyCode::Semicolon),
+            '"' => Some(VirtualKeyCode::Apostrophe),
+            '<' => Some(VirtualKeyCode::Comma),
+            '>' => Some(VirtualKeyCode::Period),
+            '?' => Some(VirtualKeyCode::Slash),
+            _ => None,
         }
     }
 
     /// Process a received character
     pub fn received_char(&mut self, c: char) {
-        if !*self.ctx.suppress_chars() {
-            self.ctx.clear_selection();
-
-            let utf8_len = c.len_utf8();
-            if *self.ctx.received_count() == 0 && self.ctx.last_modifiers().alt && utf8_len == 1 {
-                self.ctx.write_to_pty(b"\x1b".to_vec());
+        if self.ctx.last_modifiers().shift {
+            if let Some(key) = self.char_to_unshifted_element(c) {
+                let mods = *self.ctx.last_modifiers();
+                if self.process_key_bindings(mods, key) {
+                    *self.ctx.suppress_chars() = true;
+                }
             }
-
-            let mut bytes = Vec::with_capacity(utf8_len);
-            unsafe {
-                bytes.set_len(utf8_len);
-                c.encode_utf8(&mut bytes[..]);
-            }
-
-            self.ctx.write_to_pty(bytes);
-
-            *self.ctx.received_count() += 1;
         }
+
+        if *self.ctx.suppress_chars() {
+            return
+        }
+
+        self.ctx.clear_selection();
+
+        let utf8_len = c.len_utf8();
+        if *self.ctx.received_count() == 0 && self.ctx.last_modifiers().alt && utf8_len == 1 {
+            self.ctx.write_to_pty(b"\x1b".to_vec());
+        }
+
+        let mut bytes = Vec::with_capacity(utf8_len);
+        unsafe {
+            bytes.set_len(utf8_len);
+            c.encode_utf8(&mut bytes[..]);
+        }
+
+        self.ctx.write_to_pty(bytes);
+
+        *self.ctx.received_count() += 1;
     }
 
     /// Attempts to find a binding and execute its action
